@@ -7,6 +7,9 @@ from tabulate import tabulate
 from bs4 import BeautifulSoup
 from settings import *
 import pandas as pd
+import multiprocessing as mlp
+
+
 
 
 def getSearchResults(term, page, column):
@@ -160,6 +163,12 @@ def selectBook(books, mirrors, page, n_books):
 
         elif elec == 'all':
             last_choice = None
+            choice_list = []
+            title_list = []
+            
+            if not os.path.isdir(DOWNLOAD_PATH):
+                os.mkdir(DOWNLOAD_PATH)
+                
             for choice in range(page*25-25, page*25):
                 if choice < len(books) and choice >= 0:  # Selection
                     title = '{}.{}'.format(
@@ -167,83 +176,29 @@ def selectBook(books, mirrors, page, n_books):
                     
                     bad_chars = '\/:*?"<>|'
                     for char in bad_chars:
-                        title = title.replace(char, " ")
-                    if not os.path.isdir(DOWNLOAD_PATH):
-                        os.mkdir(DOWNLOAD_PATH)
+                        title = title.replace(char, " ")     
+                        
                     downloaded = [f[:30] for f in os.listdir(DOWNLOAD_PATH)]
-                    if title[:10] in downloaded:
+                    if title[:30] in downloaded:
                         continue
-
-                    if True:
-                        ''' This is the default mirror.
-                        In the case we can get the other mirrors to work,
-                        change True to a boolean variable defined in settings.py
-                        that defines if the user want to have a option to 
-                        select from the different mirrors. '''
-                        DownloadBook.default_mirror(
-                            mirrors[choice]['mirrors'][0], title)
                     else:
-                        number_of_mirrors = len(mirrors[choice]['mirrors'])
-                        print_list = (
-                            "#1: Mirror bookdescr.org (default)",
-                            "#2: Mirror libgen.me",
-                            "#3: Mirror library1.org",
-                            "#4: Mirror b-ok.cc",
-                            "#5: Mirror bookfi.net")
-
-                        while SHOW_MIRRORS:
-                            print("\nMirrors Available: \n")
-                            ava_mirrors = list(mirrors[choice]['mirrors'].keys())
-                            for mir in ava_mirrors:
-                                print(print_list[mir])
-
-                            if last_choice is None:
-                                import numpy as np
-                                last_choice = np.random.randint(0, 2, 1)[0]
-                            else:
-                                while(True):
-                                    rand_num = np.random.randint(0, 2, 1)[0]
-                                    if last_choice == rand_num:
-                                        continue
-                                    else:
-                                        last_choice = rand_num
-                                        break
-
-                            option = str(int(last_choice))
-
-                            if option.isnumeric() and int(option) > 0 and int(option) <= number_of_mirrors:
-                                if int(option) == 1:
-                                    DownloadBook.default_mirror(
-                                        mirrors[choice]['mirrors'][0], title)
-                                    pass
-                                elif int(option) == 2:
-                                    DownloadBook.second_mirror(
-                                        mirrors[choice]['mirrors'][1], title)
-                                    pass
-                                elif int(option) == 3:
-                                    DownloadBook.third_mirror(
-                                        mirrors[choice]['mirrors'][2], title)
-                                    pass
-                                elif int(option) == 4:
-                                    DownloadBook.fourth_mirror(
-                                        mirrors[choice]['mirrors'][3], title)
-                                    pass
-                                elif int(option) == 5:
-                                    DownloadBook.fifth_mirror(
-                                        mirrors[choice]['mirrors'][4], title)
-
-                                # return(False)
-                                break
-
-                            elif option == 'q' or option == 'Q':  # Quit
-                                return(False)
-                            else:
-                                print("Not a valid option.")
-                                continue
+                        title_list.append(title)
+                        choice_list.append(mirrors[choice]['mirrors'][0])
                 else:
                     print("Couldn't fetch the book #{}".format(str(choice + 1)))
                     break
+
+            if True:
+                ''' This is the default mirror.
+                In the case we can get the other mirrors to work,
+                change True to a boolean variable defined in settings.py
+                that defines if the user want to have a option to 
+                select from the different mirrors. '''
+                DownloadBook.default_mirror(choice_list, title_list)
+                
             return(True)
+
+            
 
         elif elec == 'q' or elec == 'Q':  # Quit
             return(False)
@@ -285,24 +240,33 @@ class DownloadBook():
                 
         print('Book downloaded to {}'.format(os.path.abspath(path)))
         
-    def default_mirror(link, filename):
+    def save_batch_book(download_link_list, file_name_list):
+        assert len(download_link_list) == len(file_name_list)
+        train_params = ((download_link_list[i], file_name_list[i]) for i in range(len(download_link_list)))
+        
+        with mlp.Pool(processes=2) as pool:
+            pool.starmap(DownloadBook.save_book, train_params)
+        
+    def default_mirror(link_list, filename_list):
         '''This is the default (and first) mirror to download.
         The base of this mirror is http://booksdescr.org'''
-        req = request.Request(link, headers=DownloadBook.headers)
-        
-        try:
-            source = request.urlopen(req)
-        except:
-            import time
-            time.sleep(3)
-            source = request.urlopen(req)
-        finally:
-            soup = BeautifulSoup(source.read(), 'lxml')
+        reqs = [request.Request(link, headers=DownloadBook.headers) for link in link_list]
+        download_url_list = []
+        for req in reqs:
+            try:
+                source = request.urlopen(req)
+            except:
+                import time
+                time.sleep(3)
+                source = request.urlopen(req)
+            finally:
+                soup = BeautifulSoup(source.read(), 'lxml')
 
-        for a in soup.find_all('a'):
-            if a.text == 'GET':
-                download_url = a.attrs['href']
-                DownloadBook.save_book(download_url, filename)
+            for a in soup.find_all('a'):
+                if a.text == 'GET':
+                    download_url = a.attrs['href']
+                    download_url_list.append(download_url)
+        DownloadBook.save_batch_book(download_url_list, filename_list)
 
 
     def second_mirror(link, filename):
