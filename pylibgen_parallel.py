@@ -8,15 +8,22 @@ from bs4 import BeautifulSoup
 from settings import *
 import pandas as pd
 import multiprocessing as mlp
+import time
 
-
-
+switch_key = 0
 
 def getSearchResults(term, page, column):
     params = urlencode({'req': term, 'column': column, 'page': page})
     url = 'http://libgen.is/search.php?&%s' % params
-
-    source = request.urlopen(url)
+    source = None
+    while source is None:
+        try:
+            source = request.urlopen(url)
+            break
+        except:
+            time.sleep(3)
+            continue
+            
     soup = BeautifulSoup(source, 'lxml')
     if page == 1:
         books_found = re.search(r'(\d+) files found', str(soup))
@@ -74,16 +81,13 @@ def selectBook(books, mirrors, page, n_books):
     headers = ['#', 'Author', 'Title', 'Publisher',
                'Year', 'Lang', 'Ext', 'Size']
 
+    global switch_key
     print(tabulate(books[(page - 1) * 25:page * 25], headers))
     # Detect when all the books are found.
     no_more_matches = n_books == len(books)
-
     if no_more_matches:
         print("\nEND OF LIST. NO MORE BOOKS FOUND")
-        pd.DataFrame(books, columns=['id', 'author', 'tinytitle',
-                                 'publisher', 'year', 'lang', 'ext', 'size']).to_csv(DOWNLOAD_PATH+'/content.csv',
-                                                                                     index=False)
-        return False
+        switch_key = 1
 
     while True:
         #if no_more_matches:
@@ -165,6 +169,7 @@ def selectBook(books, mirrors, page, n_books):
             last_choice = None
             choice_list = []
             title_list = []
+            id_list = []
             
             if not os.path.isdir(DOWNLOAD_PATH):
                 os.mkdir(DOWNLOAD_PATH)
@@ -174,14 +179,21 @@ def selectBook(books, mirrors, page, n_books):
                     title = '{}.{}'.format(
                         mirrors[choice]['title'], books[choice][-2])
                     
+                    b_id = mirrors[choice]['title'].split(' ')[-1].split('.')[0]
+                    if b_id in id_list:
+                        continue
+                    else:
+                        id_list.append(b_id)
+                    
                     bad_chars = '\/:*?"<>|'
                     for char in bad_chars:
                         title = title.replace(char, " ")     
                         
-                    downloaded = [f[:30] for f in os.listdir(DOWNLOAD_PATH)]
-                    if title[:30] in downloaded:
+                    downloaded = [f[:240] for f in os.listdir(DOWNLOAD_PATH)]
+                    if title[:240] in downloaded:
                         continue
                     else:
+                        title = title[:240]+'.'+title.split('.')[-1]
                         title_list.append(title)
                         choice_list.append(mirrors[choice]['mirrors'][0])
                 else:
@@ -194,7 +206,8 @@ def selectBook(books, mirrors, page, n_books):
                 change True to a boolean variable defined in settings.py
                 that defines if the user want to have a option to 
                 select from the different mirrors. '''
-                DownloadBook.default_mirror(choice_list, title_list)
+                if len(choice_list) > 0:
+                    DownloadBook.default_mirror(choice_list, title_list)
                 
             return(True)
 
@@ -253,14 +266,16 @@ class DownloadBook():
         reqs = [request.Request(link, headers=DownloadBook.headers) for link in link_list]
         download_url_list = []
         for req in reqs:
-            try:
-                source = request.urlopen(req)
-            except:
-                import time
-                time.sleep(3)
-                source = request.urlopen(req)
-            finally:
-                soup = BeautifulSoup(source.read(), 'lxml')
+            source = None
+            while source is None:
+                try:
+                    source = request.urlopen(req)
+                    break
+                except:
+                    time.sleep(3)
+                    continue
+                
+            soup = BeautifulSoup(source.read(), 'lxml')
 
             for a in soup.find_all('a'):
                 if a.text == 'GET':
@@ -371,7 +386,6 @@ if __name__ == '__main__':
     mirrors = []
     page = 1
     get_next_page = True
-    
     while get_next_page:
         if page == 1:
             raw_books, n_books = getSearchResults(search_term, page, sel_column)
@@ -387,5 +401,10 @@ if __name__ == '__main__':
             page += 1
         elif raw_books == [] and n_books != 0:  # 0 matches in the last page
             get_next_page = selectBook(books, mirrors, page - 1, n_books)
-        else:  # 0 matches total
+            if switch_key == 1:  # 0 matches total
+                pd.DataFrame(books, columns=['id', 'Author', 'Title', 'Publisher',
+               'Year', 'Lang', 'Ext', 'Size']).to_csv(DOWNLOAD_PATH+'/content.csv',
+                                                             index=False)
+                get_next_page = False
+        else:
             get_next_page = False
